@@ -42,6 +42,7 @@ jobs:
           # BUILD_DATE força invalidação do cache quando necessário (adicione se precisar)
           build-args: |
             NODE_ENV=production
+            NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ secrets.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
             BUILD_DATE=${{ github.run_number }}
 
 

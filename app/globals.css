@@ -61,6 +61,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Force dark mode styles */
+body.dark {
+  color: hsl(210 40% 98%);
+  background: hsl(222.2 84% 4.9%);
+}
+
 a {
   color: inherit;
   text-decoration: none;
