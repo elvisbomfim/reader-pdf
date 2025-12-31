@@ -7,6 +7,7 @@ const withPWA = require('next-pwa')({
 });
 
 const nextConfig = {
+    output: 'standalone',
     webpack: (config) => {
         // PDF.js worker configuration
         config.resolve.alias.canvas = false;
