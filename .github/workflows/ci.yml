@@ -1,0 +1,72 @@
+name: CI-CD Laravel + Vue + Magalu Cloud
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Configura o Docker Buildx (Necessário para cache e recursos avançados)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Magalu Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.MAGALU_REGISTRY_URL }}
+          username: ${{ secrets.MAGALU_REGISTRY_USERNAME }}
+          password: ${{ secrets.MAGALU_REGISTRY_PASSWORD }}
+
+      # Build e Push em um único passo otimizado
+      - name: Build and push
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Gera duas tags: uma com o hash do commit (para segurança) e a latest
+          tags: ${{ vars.MAGALU_REGISTRY_URL }}/${{ vars.MAGALU_REGISTRY_IMAGE }}:latest
+          # Usa o cache do GitHub Actions para acelerar builds futuros
+          # IMPORTANTE: O cache pode manter versões antigas do mix-manifest.json
+          # Para invalidar o cache: comente as linhas cache-from e cache-to abaixo
+          # ou adicione um timestamp/hash único no build-args
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Passa variáveis MIX_* para o build dos assets
+          # NODE_ENV=production é definido no Dockerfile para garantir versionamento correto
+          # BUILD_DATE força invalidação do cache quando necessário (adicione se precisar)
+          build-args: |
+            NODE_ENV=production
+            BUILD_DATE=${{ github.run_number }}
+
+
+      # webhook do Coolify para fazer o deploy da aplicação principal
+      - name: Trigger Coolify deployment (App)
+        if: steps.build-and-push.outcome == 'success'
+        run: |
+          echo "🚀 Triggering Coolify deployment..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_WEBHOOK_TOKEN }}" \
+            -X GET \
+            --max-time 30 \
+            'https://push.conectsys.net/api/v1/deploy?uuid=psg48cokw04ksssgcw4kg4wc&force=false')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "✅ Deployment triggered successfully"
+          echo ""
+          echo "=== App Deployment ==="
+          echo "Status Code: $HTTP_CODE"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+
+          # Fail if HTTP status is not 2xx
+          if [[ ! "$HTTP_CODE" =~ ^2 ]]; then
+            echo "❌ Deployment failed with status code: $HTTP_CODE"
+            exit 1
+          fi

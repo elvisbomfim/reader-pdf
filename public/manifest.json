@@ -1,0 +1,30 @@
+{
+    "name": "PDF Sheet Music Reader",
+    "short_name": "Music Reader",
+    "description": "Read and organize your sheet music PDFs in sequence",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#0f172a",
+    "theme_color": "#0ea5e9",
+    "orientation": "landscape",
+    "icons": [
+        {
+            "src": "/icon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/icon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": [
+        "music",
+        "productivity",
+        "utilities"
+    ],
+    "screenshots": []
+}
