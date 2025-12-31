@@ -7,10 +7,30 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
 let tokenClient: any = null;
 let accessToken: string | null = null;
+let tokenExpiry: number | null = null;
+
+const TOKEN_STORAGE_KEY = 'google_drive_token';
+const TOKEN_EXPIRY_KEY = 'google_drive_token_expiry';
 
 export const initializeGoogleDrive = (clientId: string) => {
     // This will be initialized on the client side with Google Identity Services
     if (typeof window !== 'undefined') {
+        // Try to restore token from localStorage
+        const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+        const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+
+        if (storedToken && storedExpiry) {
+            const expiry = parseInt(storedExpiry);
+            if (Date.now() < expiry) {
+                accessToken = storedToken;
+                tokenExpiry = expiry;
+            } else {
+                // Token expired, clear it
+                localStorage.removeItem(TOKEN_STORAGE_KEY);
+                localStorage.removeItem(TOKEN_EXPIRY_KEY);
+            }
+        }
+
         // @ts-ignore
         tokenClient = window.google?.accounts.oauth2.initTokenClient({
             client_id: clientId,
@@ -33,6 +53,16 @@ export const requestAccessToken = (): Promise<string> => {
                 return;
             }
             accessToken = response.access_token;
+
+            // Store token with 50 minutes expiry (tokens last 1 hour, refresh before)
+            const expiry = Date.now() + (50 * 60 * 1000);
+            tokenExpiry = expiry;
+
+            if (typeof window !== 'undefined' && accessToken) {
+                localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+                localStorage.setItem(TOKEN_EXPIRY_KEY, expiry.toString());
+            }
+
             resolve(response.access_token);
         };
 
@@ -40,10 +70,19 @@ export const requestAccessToken = (): Promise<string> => {
     });
 };
 
+const ensureValidToken = async (): Promise<void> => {
+    if (!accessToken || !tokenExpiry || Date.now() >= tokenExpiry) {
+        // Token expired or missing, request new one
+        await requestAccessToken();
+    }
+};
+
 export const listPDFFiles = async (pageToken?: string): Promise<{
     files: GoogleDriveFile[];
     nextPageToken?: string;
 }> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -80,6 +119,8 @@ export const listPDFFiles = async (pageToken?: string): Promise<{
 };
 
 export const listFolders = async (folderId?: string): Promise<GoogleDriveFile[]> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -113,6 +154,8 @@ export const listFolders = async (folderId?: string): Promise<GoogleDriveFile[]>
 };
 
 export const listPDFsInFolder = async (folderId?: string): Promise<GoogleDriveFile[]> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -146,6 +189,8 @@ export const listPDFsInFolder = async (folderId?: string): Promise<GoogleDriveFi
 };
 
 export const listStarredPDFs = async (): Promise<GoogleDriveFile[]> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -175,6 +220,8 @@ export const listStarredPDFs = async (): Promise<GoogleDriveFile[]> => {
 };
 
 export const searchPDFFiles = async (query: string, folderId?: string): Promise<GoogleDriveFile[]> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -208,6 +255,8 @@ export const searchPDFFiles = async (query: string, folderId?: string): Promise<
 };
 
 export const downloadPDFFile = async (fileId: string): Promise<Blob> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -229,6 +278,8 @@ export const downloadPDFFile = async (fileId: string): Promise<Blob> => {
 };
 
 export const getFileMetadata = async (fileId: string): Promise<GoogleDriveFile> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
@@ -283,6 +334,8 @@ export const uploadPDFToDrive = async (
     file: File,
     folderId?: string
 ): Promise<GoogleDriveFile> => {
+    await ensureValidToken();
+
     if (!accessToken) {
         throw new Error('Not authenticated');
     }
