@@ -22,6 +22,28 @@ export const createPDFBlob = async (pdfDoc: PDFDocument): Promise<Blob> => {
     return new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 };
 
+export const mergePDFs = async (pdfBlobs: Blob[]): Promise<Blob> => {
+    if (pdfBlobs.length === 0) {
+        throw new Error('No PDFs to merge');
+    }
+
+    if (pdfBlobs.length === 1) {
+        return pdfBlobs[0];
+    }
+
+    const mergedPdf = await PDFDocument.create();
+
+    for (const blob of pdfBlobs) {
+        const pdfDoc = await loadPDFFromBlob(blob);
+        const pageCount = pdfDoc.getPageCount();
+        const pageIndices = Array.from({ length: pageCount }, (_, i) => i);
+        const pages = await mergedPdf.copyPages(pdfDoc, pageIndices);
+        pages.forEach(page => mergedPdf.addPage(page));
+    }
+
+    return createPDFBlob(mergedPdf);
+};
+
 export const blobToDataURL = (blob: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();

@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Save, Plus, Trash2, GripVertical } from 'lucide-react';
+import { ArrowLeft, Save, Plus, Trash2, GripVertical, Combine, Download, Cloud, Loader2, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { loadSetlists, saveSetlist, generateId } from '@/lib/storage';
+import { mergePDFs } from '@/lib/pdf-utils';
+import { downloadPDFFile, uploadPDFToDrive, isAuthenticated } from '@/lib/google-drive';
+import { getCachedPDFFromIndexedDB } from '@/lib/pdf-utils';
+import { getLocalPDF } from '@/lib/local-storage';
 import DriveFileBrowser from '@/components/DriveFileBrowser';
 import type { Setlist, PDF } from '@/lib/types';
 
@@ -23,6 +27,9 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
     });
     const [showDriveBrowser, setShowDriveBrowser] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [showMergeModal, setShowMergeModal] = useState(false);
+    const [isMerging, setIsMerging] = useState(false);
+    const [mergeProgress, setMergeProgress] = useState({ current: 0, total: 0 });
 
     useEffect(() => {
         if (!isNew) {
@@ -78,6 +85,84 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
         if (newIndex >= 0 && newIndex < newPdfs.length) {
             [newPdfs[index], newPdfs[newIndex]] = [newPdfs[newIndex], newPdfs[index]];
             setSetlist({ ...setlist, pdfs: newPdfs });
+        }
+    };
+
+    const handleMergePDFs = async (option: 'download' | 'upload') => {
+        setIsMerging(true);
+        setMergeProgress({ current: 0, total: setlist.pdfs.length });
+
+        try {
+            // Download all PDFs
+            const pdfBlobs: Blob[] = [];
+
+            for (let i = 0; i < setlist.pdfs.length; i++) {
+                const pdf = setlist.pdfs[i];
+                setMergeProgress({ current: i + 1, total: setlist.pdfs.length });
+
+                let blob: Blob | null = null;
+
+                // Try local storage first
+                if (pdf.isLocal) {
+                    const localPDF = await getLocalPDF(pdf.id);
+                    if (localPDF) {
+                        blob = localPDF.blob;
+                    }
+                }
+
+                // Try cache
+                if (!blob) {
+                    blob = await getCachedPDFFromIndexedDB(pdf.id);
+                }
+
+                // Download from Drive
+                if (!blob && !pdf.isLocal) {
+                    blob = await downloadPDFFile(pdf.driveId);
+                }
+
+                if (!blob) {
+                    throw new Error(`Failed to load PDF: ${pdf.name}`);
+                }
+
+                pdfBlobs.push(blob);
+            }
+
+            // Merge PDFs
+            const mergedBlob = await mergePDFs(pdfBlobs);
+            const filename = `${setlist.name}.pdf`;
+
+            if (option === 'download') {
+                // Download merged PDF
+                const url = URL.createObjectURL(mergedBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                alert('PDF merged and downloaded successfully!');
+            } else {
+                // Upload to Drive
+                if (!isAuthenticated()) {
+                    alert('Please sign in to Google Drive first');
+                    return;
+                }
+
+                const file = new File([mergedBlob], filename, { type: 'application/pdf' });
+                await uploadPDFToDrive(file);
+
+                alert('PDF merged and uploaded to Google Drive successfully!');
+            }
+
+            setShowMergeModal(false);
+        } catch (error) {
+            console.error('Error merging PDFs:', error);
+            alert('Failed to merge PDFs. Please try again.');
+        } finally {
+            setIsMerging(false);
+            setMergeProgress({ current: 0, total: 0 });
         }
     };
 
@@ -146,12 +231,22 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
                                 <h2 className="text-lg font-bold text-white">
                                     PDFs ({setlist.pdfs.length})
                                 </h2>
-                                <button
-                                    onClick={() => setShowDriveBrowser(!showDriveBrowser)}
-                                    className="btn btn-primary btn-sm">
-                                    <Plus className="h-4 w-4" />
-                                    Add PDF
-                                </button>
+                                <div className="flex gap-2">
+                                    {setlist.pdfs.length >= 2 && (
+                                        <button
+                                            onClick={() => setShowMergeModal(true)}
+                                            className="btn btn-secondary btn-sm">
+                                            <Combine className="h-4 w-4" />
+                                            Merge PDFs
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setShowDriveBrowser(!showDriveBrowser)}
+                                        className="btn btn-primary btn-sm">
+                                        <Plus className="h-4 w-4" />
+                                        Add PDF
+                                    </button>
+                                </div>
                             </div>
 
                             {setlist.pdfs.length === 0 ? (
@@ -209,6 +304,64 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
                     </div>
                 </div>
             </div>
+
+            {/* Merge Modal */}
+            {showMergeModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="card max-w-md w-full">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-xl font-bold text-white">Merge PDFs</h2>
+                            <button
+                                onClick={() => setShowMergeModal(false)}
+                                className="btn btn-ghost text-white p-2"
+                                disabled={isMerging}>
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        <div className="mb-6">
+                            <p className="text-slate-300 mb-2">
+                                This will combine all {setlist.pdfs.length} PDFs into a single file:
+                            </p>
+                            <p className="text-primary-400 font-semibold">
+                                📄 {setlist.name}.pdf
+                            </p>
+                        </div>
+
+                        {isMerging ? (
+                            <div className="mb-6">
+                                <div className="flex items-center justify-between text-sm text-slate-400 mb-2">
+                                    <span>Processing PDFs...</span>
+                                    <span>{mergeProgress.current} / {mergeProgress.total}</span>
+                                </div>
+                                <div className="w-full bg-slate-700 rounded-full h-2">
+                                    <div
+                                        className="bg-primary-500 h-2 rounded-full transition-all"
+                                        style={{
+                                            width: `${(mergeProgress.current / mergeProgress.total) * 100}%`,
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                <button
+                                    onClick={() => handleMergePDFs('download')}
+                                    className="btn btn-primary w-full">
+                                    <Download className="h-5 w-5" />
+                                    Download Merged PDF
+                                </button>
+                                <button
+                                    onClick={() => handleMergePDFs('upload')}
+                                    className="btn btn-secondary w-full">
+                                    <Cloud className="h-5 w-5" />
+                                    Upload to Google Drive
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </main>
     );
 }
