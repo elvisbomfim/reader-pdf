@@ -44,6 +44,39 @@ export const mergePDFs = async (pdfBlobs: Blob[]): Promise<Blob> => {
     return createPDFBlob(mergedPdf);
 };
 
+export interface PageSelection {
+    pdfIndex: number;
+    pageNumbers: number[]; // 0-indexed
+}
+
+export const mergePDFsWithSelection = async (
+    pdfBlobs: Blob[],
+    selections: PageSelection[]
+): Promise<Blob> => {
+    if (selections.length === 0) {
+        throw new Error('No pages selected');
+    }
+
+    const mergedPdf = await PDFDocument.create();
+
+    for (const selection of selections) {
+        const blob = pdfBlobs[selection.pdfIndex];
+        const pdfDoc = await loadPDFFromBlob(blob);
+
+        // Sort page numbers to maintain order
+        const sortedPages = [...selection.pageNumbers].sort((a, b) => a - b);
+        const pages = await mergedPdf.copyPages(pdfDoc, sortedPages);
+        pages.forEach(page => mergedPdf.addPage(page));
+    }
+
+    return createPDFBlob(mergedPdf);
+};
+
+export const getPDFPageCountFromBlob = async (blob: Blob): Promise<number> => {
+    const pdfDoc = await loadPDFFromBlob(blob);
+    return pdfDoc.getPageCount();
+};
+
 export const blobToDataURL = (blob: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();

@@ -5,11 +5,12 @@ import { ArrowLeft, Save, Plus, Trash2, GripVertical, Combine, Download, Cloud, 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { loadSetlists, saveSetlist, generateId } from '@/lib/storage';
-import { mergePDFs } from '@/lib/pdf-utils';
+import { mergePDFs, mergePDFsWithSelection, type PageSelection } from '@/lib/pdf-utils';
 import { downloadPDFFile, uploadPDFToDrive, isAuthenticated } from '@/lib/google-drive';
 import { getCachedPDFFromIndexedDB } from '@/lib/pdf-utils';
 import { getLocalPDF } from '@/lib/local-storage';
 import DriveFileBrowser from '@/components/DriveFileBrowser';
+import PageSelector from '@/components/PageSelector';
 import type { Setlist, PDF } from '@/lib/types';
 
 export default function SetlistEditPage({ params }: { params: { id: string } }) {
@@ -28,8 +29,10 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
     const [showDriveBrowser, setShowDriveBrowser] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [showMergeModal, setShowMergeModal] = useState(false);
+    const [showPageSelector, setShowPageSelector] = useState(false);
     const [isMerging, setIsMerging] = useState(false);
     const [mergeProgress, setMergeProgress] = useState({ current: 0, total: 0 });
+    const [pdfBlobs, setPdfBlobs] = useState<Blob[]>([]);
 
     useEffect(() => {
         if (!isNew) {
@@ -85,6 +88,103 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
         if (newIndex >= 0 && newIndex < newPdfs.length) {
             [newPdfs[index], newPdfs[newIndex]] = [newPdfs[newIndex], newPdfs[index]];
             setSetlist({ ...setlist, pdfs: newPdfs });
+        }
+    };
+
+    const loadAllPDFs = async (): Promise<Blob[]> => {
+        const blobs: Blob[] = [];
+
+        for (let i = 0; i < setlist.pdfs.length; i++) {
+            const pdf = setlist.pdfs[i];
+            setMergeProgress({ current: i + 1, total: setlist.pdfs.length });
+
+            let blob: Blob | null = null;
+
+            // Try local storage first
+            if (pdf.isLocal) {
+                const localPDF = await getLocalPDF(pdf.id);
+                if (localPDF) {
+                    blob = localPDF.blob;
+                }
+            }
+
+            // Try cache
+            if (!blob) {
+                blob = await getCachedPDFFromIndexedDB(pdf.id);
+            }
+
+            // Download from Drive
+            if (!blob && !pdf.isLocal) {
+                blob = await downloadPDFFile(pdf.driveId);
+            }
+
+            if (!blob) {
+                throw new Error(`Failed to load PDF: ${pdf.name}`);
+            }
+
+            blobs.push(blob);
+        }
+
+        return blobs;
+    };
+
+    const handleSelectPages = async () => {
+        setIsMerging(true);
+        setMergeProgress({ current: 0, total: setlist.pdfs.length });
+
+        try {
+            const blobs = await loadAllPDFs();
+            setPdfBlobs(blobs);
+            setShowMergeModal(false);
+            setShowPageSelector(true);
+        } catch (error) {
+            console.error('Error loading PDFs:', error);
+            alert('Failed to load PDFs. Please try again.');
+        } finally {
+            setIsMerging(false);
+            setMergeProgress({ current: 0, total: 0 });
+        }
+    };
+
+    const handlePageSelectionConfirm = async (selections: PageSelection[], option: 'download' | 'upload') => {
+        setIsMerging(true);
+        setShowPageSelector(false);
+
+        try {
+            // Merge PDFs with selection
+            const mergedBlob = await mergePDFsWithSelection(pdfBlobs, selections);
+            const filename = `${setlist.name}.pdf`;
+
+            if (option === 'download') {
+                // Download merged PDF
+                const url = URL.createObjectURL(mergedBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                alert('PDF merged and downloaded successfully!');
+            } else {
+                // Upload to Drive
+                if (!isAuthenticated()) {
+                    alert('Please sign in to Google Drive first');
+                    return;
+                }
+
+                const file = new File([mergedBlob], filename, { type: 'application/pdf' });
+                await uploadPDFToDrive(file);
+
+                alert('PDF merged and uploaded to Google Drive successfully!');
+            }
+        } catch (error) {
+            console.error('Error merging PDFs:', error);
+            alert('Failed to merge PDFs. Please try again.');
+        } finally {
+            setIsMerging(false);
+            setPdfBlobs([]);
         }
     };
 
@@ -321,7 +421,7 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
 
                         <div className="mb-6">
                             <p className="text-slate-300 mb-2">
-                                This will combine all {setlist.pdfs.length} PDFs into a single file:
+                                Combine {setlist.pdfs.length} PDFs into:
                             </p>
                             <p className="text-primary-400 font-semibold">
                                 📄 {setlist.name}.pdf
@@ -331,7 +431,7 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
                         {isMerging ? (
                             <div className="mb-6">
                                 <div className="flex items-center justify-between text-sm text-slate-400 mb-2">
-                                    <span>Processing PDFs...</span>
+                                    <span>Loading PDFs...</span>
                                     <span>{mergeProgress.current} / {mergeProgress.total}</span>
                                 </div>
                                 <div className="w-full bg-slate-700 rounded-full h-2">
@@ -345,22 +445,62 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
                             </div>
                         ) : (
                             <div className="space-y-3">
+                                <p className="text-sm text-slate-400 mb-4">Choose merge option:</p>
+
                                 <button
-                                    onClick={() => handleMergePDFs('download')}
-                                    className="btn btn-primary w-full">
-                                    <Download className="h-5 w-5" />
-                                    Download Merged PDF
+                                    onClick={() => {
+                                        setShowMergeModal(false);
+                                        handleMergePDFs('download');
+                                    }}
+                                    className="btn btn-primary w-full text-left justify-start">
+                                    <div>
+                                        <div className="font-semibold">⚡ Quick Merge</div>
+                                        <div className="text-xs opacity-75">Merge all pages as-is</div>
+                                    </div>
                                 </button>
+
                                 <button
-                                    onClick={() => handleMergePDFs('upload')}
-                                    className="btn btn-secondary w-full">
-                                    <Cloud className="h-5 w-5" />
-                                    Upload to Google Drive
+                                    onClick={handleSelectPages}
+                                    className="btn btn-secondary w-full text-left justify-start">
+                                    <div>
+                                        <div className="font-semibold">☑️ Select Pages</div>
+                                        <div className="text-xs opacity-75">Choose specific pages to include</div>
+                                    </div>
+                                </button>
+
+                                <button
+                                    disabled
+                                    className="btn btn-ghost w-full text-left justify-start opacity-50 cursor-not-allowed">
+                                    <div>
+                                        <div className="font-semibold">✏️ Edit & Merge</div>
+                                        <div className="text-xs opacity-75">Annotate and crop (coming soon)</div>
+                                    </div>
                                 </button>
                             </div>
                         )}
                     </div>
                 </div>
+            )}
+
+            {/* Page Selector */}
+            {showPageSelector && (
+                <PageSelector
+                    pdfs={setlist.pdfs}
+                    pdfBlobs={pdfBlobs}
+                    onConfirm={(selections) => {
+                        // Show download/upload modal after selection
+                        const confirmed = confirm(
+                            `Merge ${selections.reduce((sum, s) => sum + s.pageNumbers.length, 0)} selected pages?\n\nChoose OK to download, or Cancel to upload to Drive.`
+                        );
+                        if (confirmed !== null) {
+                            handlePageSelectionConfirm(selections, confirmed ? 'download' : 'upload');
+                        }
+                    }}
+                    onCancel={() => {
+                        setShowPageSelector(false);
+                        setPdfBlobs([]);
+                    }}
+                />
             )}
         </main>
     );
