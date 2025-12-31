@@ -370,7 +370,7 @@ export default function DriveFileBrowser({
                                                         {file.name}
                                                     </h3>
                                                     {file.syncedToDrive && (
-                                                        <Cloud className="h-4 w-4 text-green-400 flex-shrink-0" title="Synced to Drive" />
+                                                        <Cloud className="h-4 w-4 text-green-400 flex-shrink-0" />
                                                     )}
                                                 </div>
                                                 <p className="text-xs text-slate-400">
