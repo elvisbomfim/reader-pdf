@@ -59,6 +59,14 @@ export default function DriveFileBrowser({
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
+        // Check browser compatibility
+        if (typeof window !== 'undefined') {
+            // Check for IndexedDB support
+            if (!window.indexedDB) {
+                setError('Your browser does not support offline storage. Please use a modern browser.');
+            }
+        }
+
         if (GOOGLE_CLIENT_ID) {
             initializeGoogleDrive(GOOGLE_CLIENT_ID);
             setAuthenticated(isAuthenticated());
@@ -68,10 +76,16 @@ export default function DriveFileBrowser({
 
     const loadLocalFiles = async () => {
         try {
+            // Check IndexedDB support
+            if (!window.indexedDB) {
+                console.warn('IndexedDB not supported');
+                return;
+            }
             const locals = await listLocalPDFs();
             setLocalFiles(locals);
         } catch (err) {
             console.error('Error loading local files:', err);
+            setError('Failed to load local files. Your browser may not support this feature.');
         }
     };
 
@@ -79,12 +93,20 @@ export default function DriveFileBrowser({
         try {
             setLoading(true);
             setError(null);
+
+            // Check if Google Identity Services is available
+            // @ts-ignore - Google Identity Services is loaded dynamically
+            if (typeof window !== 'undefined' && !window.google?.accounts) {
+                setError('Google Sign-In is not supported on this browser. Please use Chrome, Safari, or Firefox on a newer device.');
+                return;
+            }
+
             await requestAccessToken();
             setAuthenticated(true);
             await loadFiles();
         } catch (err) {
             console.error('Sign in error:', err);
-            setError('Failed to sign in. Please try again.');
+            setError('Failed to sign in. Please try using a newer browser or device.');
         } finally {
             setLoading(false);
         }

@@ -79,6 +79,31 @@ npm run build
 npm run start
 ```
 
+## Browser Compatibility
+
+### Minimum Requirements
+
+- **Desktop:** Chrome 90+, Firefox 88+, Safari 14+, Edge 90+
+- **Mobile/Tablet:** iOS 14+, Android 10+, Chrome Mobile 90+
+
+### Features by Browser
+
+| Feature | Modern Browsers | Older Browsers (iPad 2, iOS 9) |
+|---------|----------------|--------------------------------|
+| PDF Viewing | ✅ Full support | ⚠️ Limited |
+| Google Drive Login | ✅ Full support | ❌ Not supported |
+| Local File Upload | ✅ Full support | ❌ Not supported |
+| Offline Storage | ✅ Full support | ⚠️ Limited |
+| Touch Gestures | ✅ Full support | ⚠️ Basic only |
+
+### Known Limitations
+
+- **iPad 2 (iOS 9):** Google Sign-In and local file upload not supported due to outdated browser APIs
+- **Older Android devices:** May have performance issues with large PDFs
+- **Safari < 14:** Some PWA features may not work
+
+**Recommendation:** For best experience, use a device from 2018 or newer with an up-to-date browser.
+
 ## Tech Stack
 
 - **Next.js 14** - React framework
