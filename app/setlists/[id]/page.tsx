@@ -11,6 +11,8 @@ import { getCachedPDFFromIndexedDB } from '@/lib/pdf-utils';
 import { getLocalPDF } from '@/lib/local-storage';
 import DriveFileBrowser from '@/components/DriveFileBrowser';
 import PageSelector from '@/components/PageSelector';
+import PDFEditor from '@/components/PDFEditor';
+import { applyAnnotationsToPDF, type Annotation } from '@/lib/pdf-annotations';
 import type { Setlist, PDF } from '@/lib/types';
 
 export default function SetlistEditPage({ params }: { params: { id: string } }) {
@@ -30,6 +32,9 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
     const [isSaving, setIsSaving] = useState(false);
     const [showMergeModal, setShowMergeModal] = useState(false);
     const [showPageSelector, setShowPageSelector] = useState(false);
+    const [showPDFEditor, setShowPDFEditor] = useState(false);
+    const [currentEditingPdfIndex, setCurrentEditingPdfIndex] = useState(0);
+    const [pdfAnnotations, setPdfAnnotations] = useState<Map<number, Annotation[]>>(new Map());
     const [isMerging, setIsMerging] = useState(false);
     const [mergeProgress, setMergeProgress] = useState({ current: 0, total: 0 });
     const [pdfBlobs, setPdfBlobs] = useState<Blob[]>([]);
@@ -185,6 +190,110 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
         } finally {
             setIsMerging(false);
             setPdfBlobs([]);
+        }
+    };
+
+    const handleEditAndMerge = async () => {
+        setIsMerging(true);
+        setMergeProgress({ current: 0, total: setlist.pdfs.length });
+
+        try {
+            const blobs = await loadAllPDFs();
+            setPdfBlobs(blobs);
+            setShowMergeModal(false);
+
+            // Start editing first PDF
+            setCurrentEditingPdfIndex(0);
+            setShowPDFEditor(true);
+        } catch (error) {
+            console.error('Error loading PDFs:', error);
+            alert('Failed to load PDFs. Please try again.');
+            setIsMerging(false);
+            setMergeProgress({ current: 0, total: 0 });
+        }
+    };
+
+    const handleAnnotationSave = async (annotations: Annotation[]) => {
+        // Store annotations for current PDF
+        const newMap = new Map(pdfAnnotations);
+        if (annotations.length > 0) {
+            newMap.set(currentEditingPdfIndex, annotations);
+        }
+        setPdfAnnotations(newMap);
+
+        // Move to next PDF or finish
+        if (currentEditingPdfIndex < setlist.pdfs.length - 1) {
+            setCurrentEditingPdfIndex(currentEditingPdfIndex + 1);
+        } else {
+            // Finished editing all PDFs, ask what to do
+            setShowPDFEditor(false);
+
+            const confirmed = confirm(
+                'Finished editing all PDFs. Do you want to merge them now?\n\nOK for Download, Cancel for Upload to Drive.'
+            );
+
+            if (confirmed !== null) {
+                await finishMergeWithAnnotations(confirmed ? 'download' : 'upload', newMap);
+            } else {
+                setPdfBlobs([]);
+                setPdfAnnotations(new Map());
+                setIsMerging(false);
+            }
+        }
+    };
+
+    const finishMergeWithAnnotations = async (option: 'download' | 'upload', annotationsMap: Map<number, Annotation[]>) => {
+        setIsMerging(true);
+
+        try {
+            // Apply annotations to each PDF
+            const annotatedBlobs: Blob[] = [];
+
+            for (let i = 0; i < pdfBlobs.length; i++) {
+                const annotations = annotationsMap.get(i);
+                if (annotations && annotations.length > 0) {
+                    setMergeProgress({ current: i + 1, total: pdfBlobs.length });
+                    const annotatedBlob = await applyAnnotationsToPDF(pdfBlobs[i], annotations);
+                    annotatedBlobs.push(annotatedBlob);
+                } else {
+                    annotatedBlobs.push(pdfBlobs[i]);
+                }
+            }
+
+            // Merge annotated PDFs
+            const mergedBlob = await mergePDFs(annotatedBlobs);
+            const filename = `${setlist.name}.pdf`;
+
+            if (option === 'download') {
+                const url = URL.createObjectURL(mergedBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                alert('Annotated PDF merged and downloaded successfully!');
+            } else {
+                if (!isAuthenticated()) {
+                    alert('Please sign in to Google Drive first');
+                    return;
+                }
+
+                const file = new File([mergedBlob], filename, { type: 'application/pdf' });
+                await uploadPDFToDrive(file);
+
+                alert('Annotated PDF merged and uploaded to Google Drive successfully!');
+            }
+        } catch (error) {
+            console.error('Error merging annotated PDFs:', error);
+            alert('Failed to merge PDFs. Please try again.');
+        } finally {
+            setIsMerging(false);
+            setPdfBlobs([]);
+            setPdfAnnotations(new Map());
+            setMergeProgress({ current: 0, total: 0 });
         }
     };
 
@@ -469,11 +578,11 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
                                 </button>
 
                                 <button
-                                    disabled
-                                    className="btn btn-ghost w-full text-left justify-start opacity-50 cursor-not-allowed">
+                                    onClick={handleEditAndMerge}
+                                    className="btn btn-secondary w-full text-left justify-start">
                                     <div>
                                         <div className="font-semibold">✏️ Edit & Merge</div>
-                                        <div className="text-xs opacity-75">Annotate and crop (coming soon)</div>
+                                        <div className="text-xs opacity-75">Annotate, crop, and customize</div>
                                     </div>
                                 </button>
                             </div>
@@ -499,6 +608,20 @@ export default function SetlistEditPage({ params }: { params: { id: string } }) 
                     onCancel={() => {
                         setShowPageSelector(false);
                         setPdfBlobs([]);
+                    }}
+                />
+            )}
+
+            {/* PDF Editor */}
+            {showPDFEditor && pdfBlobs[currentEditingPdfIndex] && (
+                <PDFEditor
+                    pdfBlob={pdfBlobs[currentEditingPdfIndex]}
+                    pdfName={setlist.pdfs[currentEditingPdfIndex].name}
+                    onSave={handleAnnotationSave}
+                    onCancel={() => {
+                        setShowPDFEditor(false);
+                        setPdfBlobs([]);
+                        setPdfAnnotations(new Map());
                     }}
                 />
             )}
