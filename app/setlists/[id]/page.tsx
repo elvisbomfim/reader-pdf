@@ -11,8 +11,13 @@ import { getCachedPDFFromIndexedDB } from '@/lib/pdf-utils';
 import { getLocalPDF } from '@/lib/local-storage';
 import DriveFileBrowser from '@/components/DriveFileBrowser';
 import PageSelector from '@/components/PageSelector';
-import PDFEditor from '@/components/PDFEditor';
+import dynamic from 'next/dynamic';
 import { applyAnnotationsToPDF, type Annotation } from '@/lib/pdf-annotations';
+
+const PDFEditor = dynamic(() => import('@/components/PDFEditor'), {
+    ssr: false,
+    loading: () => <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><Loader2 className="h-8 w-8 animate-spin text-white" /></div>
+});
 import type { Setlist, PDF } from '@/lib/types';
 
 export default function SetlistEditPage({ params }: { params: { id: string } }) {

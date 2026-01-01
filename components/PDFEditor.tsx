@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Document, Page as ReactPDFPage } from 'react-pdf';
+import { Document, Page as ReactPDFPage, pdfjs } from 'react-pdf';
+
+// Fix for worker using CDN
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 import { X, Pen, Highlighter, Type, Crop, Eraser, Undo, Redo, ChevronLeft, ChevronRight, Download, Cloud } from 'lucide-react';
 import type { Annotation, PenAnnotation, HighlightAnnotation, TextAnnotation, CropAnnotation } from '@/lib/pdf-annotations';
 
